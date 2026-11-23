@@ -97,3 +97,20 @@ Visual only, except that the release point and run-up times changed to match the
 5. **No feedback after each ball.** There is no hint about timing (early or late). The spec says to show minimal stats, so this was left out on purpose.
 6. **Extras.** Only wides (crease x > 0.95 or < -0.75, or height > 2.0) and no-balls (random overstep). No byes, leg-byes or run-outs.
 7. **Pending decision.** The first BOWLED in the browser test happened on a ball nobody swung at. That's correct behaviour, but confirm it with the user if the HUD count seems off.
+
+## Update: skinned player models (branch `skinned-players`)
+
+- `assets/models/player.glb` is the Ready Player Me sample avatar from the three.js examples. `js/avatar.js` loads it once (`loadAvatarModel`, awaited in `main.js` before `buildScene`).
+- At load time the model is adapted:
+  - The fedora/hair mesh is removed.
+  - The tailcoat is cut at the waist, and its small decorative pieces are dropped: bow tie, buttons and buttonhole rose. Collar, cuffs and waistcoat are kept, so it reads as a shirt.
+  - Limb bones are stretched to `LEN`, so the joints line up with the procedural IK.
+- Each `Character` gets an `Avatar` (`scene.js`).
+  - The procedural body meshes are hidden. Kit (helmet/cap/hat, pads, batting and keeping gloves) stays procedural and visible.
+  - Headgear and a short-hair cap are re-parented to the avatar's Head bone.
+- `Avatar.drive()` runs each frame after `anim.update`:
+  - The pelvis, spine chain, neck and head copy the FK groups.
+  - Legs and arms re-run the two-bone IK from the avatar's own hip and shoulder joints to the rig's targets (`Character.tg`).
+  - Bones are aimed with a (bone axis, hinge axis) frame map from the bind pose.
+- Kit colours: shirt, trousers and shoes become plain materials. Skin is the model's texture, tinted in linear space toward the player's tone.
+- To revert, check out `main`; the procedural bodies are unchanged there.

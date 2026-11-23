@@ -4,6 +4,7 @@ import { BAT, BLADE_CENTER } from './bat.js';
 import { BALL_R, STUMPS } from './physics.js';
 import { buildStadium, blobTexture } from './stadium.js';
 import { Character, makeBatMeshes, mat } from './models.js';
+import { Avatar } from './avatar.js';
 
 function makeStumps(z) {
   const g = new THREE.Group();
@@ -95,6 +96,10 @@ export function buildScene(renderer) {
   }
   const umpire = new Character(scene, { shirt: 0x9ad0ff, trousers: 0x1a1a1a, trim: 0x9ad0ff, shoe: 0x111111, headgear: 'hat', hatColor: 0xf5f2e8, skin: pick(SKINS), longSleeves: true });
 
+  // skinned human bodies driven by the procedural rigs
+  const people = [batsman, nonStriker, bowler, ...fielders, umpire];
+  for (const c of people) c.avatar = new Avatar(scene, c);
+
   // soft blob shadows (players outside the shadow camera stay grounded)
   const blobTex = blobTexture();
   const blobMat = new THREE.MeshBasicMaterial({ map: blobTex, transparent: true, depthWrite: false });
@@ -131,5 +136,5 @@ export function buildScene(renderer) {
     trail.push(m);
   }
 
-  return { scene, camera, sun, stumps, bowlerStumps, batsman, nonStriker, bat, bat2, ball, ballShadow, trail, bowler, fielders, umpire, blobs, crowd };
+  return { people, scene, camera, sun, stumps, bowlerStumps, batsman, nonStriker, bat, bat2, ball, ballShadow, trail, bowler, fielders, umpire, blobs, crowd };
 }

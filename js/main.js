@@ -4,6 +4,7 @@ import { Game, DT, GROUND_CENTER } from './game.js';
 import { buildScene } from './scene.js';
 import { Animator } from './anim.js';
 import { initMenu, updateHUD } from './ui.js';
+import { loadAvatarModel } from './avatar.js';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -14,6 +15,7 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
 document.body.prepend(renderer.domElement);
 
+await loadAvatarModel('assets/models/player.glb');
 const S = buildScene(renderer);
 const game = new Game();
 const anim = new Animator(S);
@@ -83,6 +85,7 @@ let brokenT = 0;
 
 function sync(dt) {
   anim.update(game, dt); // also places the bat (stance/backlift, then the exact physics pose)
+  for (const c of S.people) c.avatar.drive();
 
   // ball: in the bowler's hand during the run-up, otherwise the simulated position
   const bp = game.ball.p;

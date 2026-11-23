@@ -180,9 +180,10 @@ export class Character {
     const hair = ball(0.1, mat(o.hair ?? 0x1b120c, { roughness: 0.9 }), 0.94, 0.86, 1.04);
     hair.position.set(0, 0.125, -0.012);
     this.head.add(hair);
-    if (o.headgear === 'helmet') this.head.add(helmet(o.helmet ?? 0x1c2c64));
-    else if (o.headgear === 'cap') this.head.add(cap(o.capColor ?? o.shirt ?? 0x1f4fbf));
-    else if (o.headgear === 'hat') this.head.add(wideHat(o.hatColor ?? 0xf4f1e6));
+    this.headgear = o.headgear === 'helmet' ? helmet(o.helmet ?? 0x1c2c64)
+      : o.headgear === 'cap' ? cap(o.capColor ?? o.shirt ?? 0x1f4fbf)
+      : o.headgear === 'hat' ? wideHat(o.hatColor ?? 0xf4f1e6) : null;
+    if (this.headgear) this.head.add(this.headgear);
 
     const mk = (parent, x, y, z) => { const m = new THREE.Object3D(); m.position.set(x, y, z); parent.add(m); return m; };
     this.mk = { hL: mk(this.hips, 0.095, -0.04, 0), hR: mk(this.hips, -0.095, -0.04, 0),
@@ -226,9 +227,12 @@ export class Character {
     this.handW = { L: new THREE.Vector3(), R: new THREE.Vector3() };
     this.gripW = { L: new THREE.Vector3(), R: new THREE.Vector3() }; // where a held ball sits (in the fingers)
     this.shW = { L: new THREE.Vector3(), R: new THREE.Vector3() };
+    // the resolved IK targets, for driving a skinned avatar
+    const tg = () => ({ ankle: new THREE.Vector3(), kneePole: new THREE.Vector3(), hand: new THREE.Vector3(), elbowPole: new THREE.Vector3() });
+    this.tg = { L: tg(), R: tg() };
   }
 
-  set visible(v) { this.root.visible = v; this.limbs.visible = v; }
+  set visible(v) { this.root.visible = v; this.limbs.visible = v; if (this.avatar) this.avatar.visible = v; }
 
   // Resolve a target: Vector3 = world; array = root-local; function(shoulderWorld) => world.
   target(t, out, base) {
@@ -261,6 +265,7 @@ export class Character {
       this.mk['h' + s].getWorldPosition(j.hip);
       this.target(p['foot' + s] ?? [sg * 0.12, 0.08, 0], j.ankle);
       this.dir(p['knee' + s] ?? [sg * 0.15, 0, 1], j.pole);
+      this.tg[s].ankle.copy(j.ankle); this.tg[s].kneePole.copy(j.pole);
       ik(j.hip, j.ankle, LEN.thigh, LEN.shin, j.pole, j.knee);
       // the knee points along the pole; that's the leg's "front" for pads and kneecaps
       placeSeg(L.thigh, j.hip, j.knee, j.pole);
@@ -278,6 +283,7 @@ export class Character {
       this.shW[s].copy(j.sh);
       this.target(p['hand' + s] ?? [sg * 0.24, 0.9, 0.04], j.hand, j.sh);
       this.dir(p['elbow' + s] ?? [sg * 0.4, -0.2, -1], j.pole);
+      this.tg[s].hand.copy(j.hand); this.tg[s].elbowPole.copy(j.pole);
       ik(j.sh, j.hand, LEN.upper, LEN.fore, j.pole, j.elbow);
       placeSeg(L.upper, j.sh, j.elbow);
       L.elbow.position.copy(j.elbow);

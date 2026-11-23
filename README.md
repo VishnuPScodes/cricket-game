@@ -14,8 +14,8 @@ Pick a difficulty, set a target and chase it down before your overs or wickets r
 - **Real bat–ball collision:** the ball (a sphere) hits the moving bat blade (a box), and the result depends on where it lands on the bat. Middle it for a clean strike or nick it for an edge.
 - **Varied bowling:** pace and spin deliveries aimed at chosen spots on the pitch, released at 130–150 km/h.
 - **Full match rules:** bowled, caught, LBW, wides, no-balls, fours, sixes and runs worked out from fielding time.
-- **Procedural stadium:** a striped outfield, floodlights, tiered stands with a crowd, ad boards and sight screens, all generated in code. There are no external art assets.
-- **Animated players:** the batsman has a realistic stance, backlift, stride and follow-through, alongside a bowler, fielders, a keeper and an umpire.
+- **Procedural stadium:** a striped outfield, floodlights, tiered stands with a crowd, ad boards and sight screens, all generated in code.
+- **Animated players:** skinned human models in team kit, driven by a procedural animation rig (IK limbs). The batsman has a realistic stance, backlift, stride and follow-through, alongside a bowler with a full run-up and action, fielders, a keeper and an umpire.
 - **Minimal broadcast-style HUD:** score, overs, target, runs needed and balls left, and nothing else.
 
 ## 🎮 Controls
@@ -82,10 +82,16 @@ npm test
 │   ├── stadium.js    # Procedural stadium
 │   ├── models.js     # Player and bat models
 │   ├── anim.js       # Player animation
+│   ├── avatar.js     # Skinned player models driven by the animation rig
 │   ├── ui.js         # Menu, HUD, end screen
 │   └── vec.js        # Vector maths helpers
+├── assets/models/    # Player model (glTF)
 └── tests/            # Headless physics and match tests
 ```
+
+## 🙏 Credits
+
+- Player model: the Ready Player Me sample avatar from the [three.js examples](https://github.com/mrdoob/three.js/tree/dev/examples/models/gltf) (© Ready Player Me), restyled at load time into cricket kit.
 
 ## 🌐 Deployment
 
