@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cricket Blast</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,500;0,600;0,700;0,800;1,700;1,800;1,900&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+  <script type="importmap">
+    { "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    } }
+  </script>
+</head>
+<body>
+  <div id="menu" class="screen">
+    <div class="menu-card">
+      <div class="logo">
+        <span class="logo-top">CRICKET</span>
+        <span class="logo-main">BLAST</span>
+        <span class="logo-sub">Batting Chase</span>
+      </div>
+      <div class="opt-row">
+        <h3>Difficulty</h3>
+        <div class="opts" data-key="difficulty">
+          <button data-v="easy" class="sel">Easy</button><button data-v="medium">Medium</button><button data-v="hard">Hard</button>
+        </div>
+      </div>
+      <div class="opt-row">
+        <h3>Target</h3>
+        <div class="opts" data-key="target">
+          <button data-v="20">20</button><button data-v="30" class="sel">30</button><button data-v="50">50</button><button data-v="100">100</button>
+        </div>
+      </div>
+      <div class="opt-row">
+        <h3>Overs</h3>
+        <div class="opts" data-key="overs">
+          <button data-v="2" class="sel">2</button><button data-v="5">5</button><button data-v="10">10</button>
+        </div>
+      </div>
+      <button id="start" class="cta">PLAY</button>
+      <div class="keys">
+        <span><kbd>Space</kbd> Swing</span>
+        <span><kbd>←</kbd><kbd>→</kbd> Direction</span>
+        <span><kbd>↑</kbd> Lofted</span>
+        <span><kbd>↓</kbd> Ground</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="hud" class="hidden">
+    <div class="scorebug">
+      <div class="sb-team">YOU</div>
+      <div class="sb-score" id="score">0/0</div>
+      <div class="sb-overs"><span>OVERS</span><b id="overs">0.0</b></div>
+      <div class="sb-chase">
+        <div>Need <b id="need">0</b> from <b id="left">0</b> balls</div>
+        <div class="sb-target">Target <b id="target">0</b></div>
+      </div>
+    </div>
+
+    <div class="shotpad">
+      <div class="dir">
+        <div class="segs">
+          <i data-a="2"></i><i data-a="1"></i><i data-a="0"></i><i data-a="-1"></i><i data-a="-2"></i>
+        </div>
+        <div class="dir-labels"><span>LEG</span><b id="aim">STRAIGHT</b><span>OFF</span></div>
+      </div>
+      <div class="shots">
+        <i data-s="1">LOFTED</i><i data-s="0">NORMAL</i><i data-s="-1">GROUND</i>
+      </div>
+    </div>
+
+    <div id="msg"><span></span></div>
+  </div>
+
+  <div id="end" class="screen hidden">
+    <div class="end-card">
+      <div id="endTitle" class="end-title"></div>
+      <div id="endText" class="end-text"></div>
+      <button id="again" class="cta">PLAY AGAIN</button>
+    </div>
+  </div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
