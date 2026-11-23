@@ -38,6 +38,17 @@ User feedback: "he is not holding the bat as a real batsman does"; everything el
 - **Head:** `Object3D.lookAt` keeps the eyes level. It watches the bowler's hand in the run-up and the ball after release, with the neck turn capped at 1.75 rad.
 - **Gloves:** batting gloves have a palm, four padded finger rolls, a thumb, a back panel and a gauntlet cuff that follows the forearm (`L.cuff`).
 
+## Update: realistic bowler run-up/action and body models
+Visual only, except that the release point and run-up times changed to match the new animation.
+- **Run-up** (`anim.js`, `gaitPose`/`gaitFoot`): a running gait with planted feet. The stance foot slides back at exactly the run speed, so it never skates. There is a flight phase, cadence rises with speed, and the arms pump opposite the legs. Pace bowlers accelerate from about 2.4 to 6.8 m/s over roughly 11 m; spinners jog in over roughly 3.5 m.
+- **Action** (`BOWL` table): take off from the left foot into the bound with a knee drive. Turn side-on in the air with the front arm reaching high. The back foot lands parallel to the crease (`uB`). The braced front foot lands on the popping crease (`ff`). Hips open before the shoulders. The straight arm comes over and releases just past vertical.
+- **Follow-through**: the arm sweeps across the body, the back leg drives through, then the bowler runs off decelerating, peels away to the off side, and stands.
+- **Release sync**: `d.p0` in `bowling.js` equals the bowler's grip point (`Character.gripW.R`) at release. If you change the action, re-measure it. `relT` uses `game.t` while the ball is live, so the hand and ball meet exactly.
+- `d.runup` is now 2.4 s (pace) and 1.5 s (spin). `anim.js` derives the whole path and gait phase from it, so the left foot takes off exactly at the start of the gather.
+- **Models** (`models.js`): lathe-built torso (tapered waist, broad chest, sloping trapezius) and muscle-profiled limbs. Face (jaw, nose, ears, eyes, brows). Bare hands with fingers and thumb. Short sleeves with trim. Boots with sole and heel. Batting pads with bolsters, knee roll and straps. `placeSeg(..., front)` orients segments so that pads and knees face the knee direction.
+- **Batsman stance**: hips flexed and pushed back, chest over the knees, knees over the toes instead of splayed.
+- **Debug harness used**: headless Chrome via CDP with a virtual clock (patched `performance.now`/`requestAnimationFrame`), driven frame by frame with `window.camOverride` for side views. Use `--use-angle=metal`; SwiftShader stalls.
+
 ## Architecture (`js/`)
 | File | Role |
 |---|---|

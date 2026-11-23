@@ -97,7 +97,7 @@ export class Game {
     const d = this.del;
     const k = Math.min(1, this.t / d.runup);
     this.bowler.x = 0.6;
-    this.bowler.z = -19.2 - (1 - k) * (d.spinner ? 6 : 14);
+    this.bowler.z = -19.2 - (1 - k) * (d.spinner ? 3.5 : 11);
     this.ball.p = { x: this.bowler.x - 0.3, y: 1.2 + k * 0.9, z: this.bowler.z };
     this.bat.update(dt);
     if (k >= 1) this.release();

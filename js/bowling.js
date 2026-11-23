@@ -33,22 +33,22 @@ export function makeDelivery(cfg) {
     const turn = sign(); // +1 off-spin (turns into the right-hander), -1 leg-spin
     const w = rnd(...cfg.spinRps) * 2 * Math.PI;
     d.speed = rnd(...cfg.spinSpeed) / 3.6;
-    d.p0 = v3(0.3, 1.95, -18.7);
+    d.p0 = v3(0.2, 2.07, -18.99); // matches the hand at release in anim.js
     d.w = v3(w * 0.45, 0, turn * w * 0.85); // topspin + side-spin about the flight axis
     d.swing = 0; d.seam = 0;
     d.length = rnd(3.0, 6.5);
     d.lineX = rnd(...cfg.line) + 0.12 * turn;
-    d.runup = 1.0;
+    d.runup = 1.5;
   } else {
     d.speed = rnd(...cfg.pace) / 3.6;
-    d.p0 = v3(0.28, 2.15, -18.5);
+    d.p0 = v3(0.36, 2.07, -18.85); // matches the hand at release in anim.js
     d.w = v3(-rnd(8, 14) * 2 * Math.PI, 0, 0); // seam backspin
     d.swing = sign() * rnd(0.3, 1) * cfg.swing;
     d.seam = gauss() * cfg.seam;
     d.length = rnd(...cfg.len);
     if (Math.random() < cfg.special) d.length = Math.random() < 0.5 ? rnd(0.5, 1.3) : rnd(9, 11);
     d.lineX = rnd(...cfg.line);
-    d.runup = 1.6;
+    d.runup = 2.4;
   }
   d.v0 = solveRelease(d.p0, d.speed, { x: d.lineX, z: -d.length }, d.w, d.swing);
   return d;

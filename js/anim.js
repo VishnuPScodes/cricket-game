@@ -72,17 +72,67 @@ function keeperPose(x, z, yaw, c) {
   };
 }
 
+// ---- running gait ----
+// Per-leg cycle c in [0,1): stance (foot planted, sliding back under the hips at exactly the
+// running speed so it stays fixed on the ground) then swing (heel kicks up behind, knee drives
+// through, foot reaches forward). The two legs are half a cycle apart, so there is a flight phase.
+const STANCE = 0.28;
+const cadence = (v) => 2.4 + 0.22 * v;                     // steps per second
+const gaitLift = (v) => clamp(0.05 + 0.05 * v, 0.07, 0.38);
+function gaitFoot(c, a, lift, side, out) {
+  c -= Math.floor(c);
+  if (c < STANCE) { out.z = a * (1 - 2 * c / STANCE); out.y = 0.08; out.pitch = 0; }
+  else {
+    const s = (c - STANCE) / (1 - STANCE);
+    out.z = -a + 2 * a * (0.5 - 0.5 * Math.cos(Math.PI * s));
+    out.y = 0.08 + lift * Math.sin(Math.PI * s) * (1.15 - 0.5 * s);
+    out.pitch = s < 0.6 ? 0.8 * Math.sin((Math.PI * s) / 0.6) : -0.2 * Math.sin((Math.PI * (s - 0.6)) / 0.4);
+  }
+  out.x = side * 0.09;
+  return out;
+}
+function gaitPose(x, z, yaw, cL, v, lean) {
+  const f = cadence(v), a = (v * STANCE) / f, lift = gaitLift(v);
+  const L = gaitFoot(cL, a, lift, 1, {}), R = gaitFoot(cL + 0.5, a, lift, -1, {});
+  const bend = clamp(v / 7, 0, 1);
+  const sL = a > 1e-3 ? clamp(L.z / a, -1, 1) : 0, sR = -sL;
+  const arm = 0.08 + 0.035 * v, rise = 0.14 * bend;
+  return {
+    x, z, yaw, sL,
+    hipY: 0.925 - 0.035 * bend - (0.01 + 0.022 * bend) * Math.cos(4 * Math.PI * (cL - STANCE / 2)),
+    lean: lean ?? 0.04 + 0.03 * v, headPitch: -(lean ?? 0.1) * 0.7,
+    hipYaw: -0.14 * bend * sL, twist: 0.24 * bend * sL,
+    footL: [L.x, L.y, L.z], footR: [R.x, R.y, R.z], footPitchL: L.pitch, footPitchR: R.pitch,
+    kneeL: [0.1, 0, 1], kneeR: [-0.1, 0, 1],
+    // arms pump opposite the legs, elbows bent, hands rising as they come forward
+    handL: [0.19, 0.96 + rise * Math.max(0, sR) - 0.03 * bend * Math.max(0, -sR), 0.04 + arm * sR],
+    handR: [-0.19, 0.96 + rise * Math.max(0, sL) - 0.03 * bend * Math.max(0, -sL), 0.04 + arm * sL],
+    elbowL: [0.3, -0.2, -1], elbowR: [-0.3, -0.2, -1],
+  };
+}
+// root-local point of a pose -> world
+function toWorld(p, a, out) {
+  const c = Math.cos(p.yaw ?? 0), s = Math.sin(p.yaw ?? 0);
+  return out.set(p.x + a[0] * c + a[2] * s, a[1], p.z - a[0] * s + a[2] * c);
+}
+// Bowling actions. Speeds in m/s: v0 start of the run, v1 at take-off, v2 at release.
+// uB/uF: back-foot and front-foot contact as fractions of the gather; ff: front foot z (popping crease -18.9).
+const BOWL = {
+  pace: { TA: 0.62, v0: 2.4, v1: 6.8, v2: 3.0, bound: 0.15, stride: 0.45, side: -1.45, uB: 0.55, uF: 0.8, ff: -19.02, x0: 0.38, vF: 4.2 },
+  spin: { TA: 0.55, v0: 1.2, v1: 3.2, v2: 1.5, bound: 0.05, stride: 0.38, side: -1.2, uB: 0.55, uF: 0.8, ff: -19.0, x0: 0.22, vF: 2.6 },
+};
+
 export class Animator {
   constructor(S) {
     this.S = S;
     this.prevState = null;
     this.relT = 0;
     this.lean = 0.3; this.roll = 0;
-    this.bowl = { phase: 0, prevZ: null };
+    this.bowl = { cyc: 0, ftW: null };
     this.fs = S.fielders.map(() => ({ px: null, pz: 0, v: 0, phase: Math.random() * 6, yaw: 0, crouch: 0 }));
     this.ns = { px: null, pz: 0, phase: 0 };
     this.tmp = { a: V(), b: V(), c: V(), d: V(), e: V() };
-    this.bw = { fl: V(), fr: V(), hl: V(), hr: V(), plantR: 0, plantL: 0, relZ: -19.2, relX: 0.55 };
+    this.bw = { fl: V(), fr: V(), hl: V(), hr: V(), kl: V(), kr: V(), e1: V(), e2: V() };
     this.time = 0;
     this.vbat = { H: V(), Hs: V(), Hb: V(), Hf: V(), Y: V(), qF: new THREE.Quaternion(), q: new THREE.Quaternion(), qS: new THREE.Quaternion(),
       qB: new THREE.Quaternion(), qP: new THREE.Quaternion(), m: new THREE.Matrix4(), one: new THREE.Vector3(1, 1, 1) };
@@ -90,7 +140,9 @@ export class Animator {
 
   update(g, dt) {
     this.time += dt;
+    // time since release: exact while the ball is live, so the hand meets the ball at release
     if (g.state === 'runup') this.relT = 0;
+    else if (g.state === 'play') this.relT = g.t;
     else this.relT += dt;
     this.prevState = g.state;
     this.bowler(g, dt);
@@ -167,13 +219,15 @@ export class Animator {
     const p = {
       x: body.x, z: body.z, yaw: Math.PI / 2,
       // knees flexed in the stance; the front knee bends further into the stride
-      hipY: 0.845 - 0.02 * trig - 0.1 * k + 0.03 * ft, hipX: 0.04 + 0.2 * k, hipZ: 0.04 + 0.03 * k,
-      hipYaw: 0.08 + 0.5 * s, hipRoll: -0.06 * k, hipPitch: 0.06 + 0.06 * k,
+      // athletic stance: hips flexed and pushed back, chest over the knees, weight on the balls of the feet
+      hipY: 0.835 - 0.02 * trig - 0.1 * k + 0.03 * ft, hipX: 0.04 + 0.2 * k, hipZ: -0.03 + 0.05 * k,
+      hipYaw: 0.08 + 0.5 * s, hipRoll: -0.06 * k, hipPitch: 0.2 - 0.08 * k,
       twist: 0.06 + 0.3 * s,
       // trigger: back foot moves a little back and across
       footR: [-0.25 + 0.03 * trig, 0.08 + 0.05 * ft, 0.06 + 0.04 * trig], footYawR: 0.05 + 0.5 * ft, footPitchR: -0.55 * ft,
       footL: [lerp(0.22, strideX, k), 0.08 + 0.1 * Math.sin(Math.PI * k), lerp(0.08, strideZ, k)], footYawL: 0.35 + 0.15 * k,
-      kneeL: [0.9, 0.1, 1], kneeR: [-0.3, 0, 1],
+      // knees point over the toes (towards point), not splayed
+      kneeL: [0.45, 0, 1], kneeR: [-0.05, 0, 1],
       handL: top, handR: bot, gripQ: vb.q,
       // top-hand elbow points at the bowler and stays high through the shot; bottom elbow tucked in
       elbowL: [1, lerp(-0.4, 0.5, Math.max(lift, w)), 0.35], elbowR: [-0.35, -1, lerp(0.25, -0.2, lift)],
@@ -214,81 +268,180 @@ export class Animator {
   }
 
   // ---------------- bowler ----------------
+  // Run-up: a real running gait (planted feet, flight phase, arm pump) accelerating to the crease.
+  // Gather: take off from the left foot into the bound, turn side-on in the air with the front arm
+  // reaching high, land on the back foot parallel to the crease, then the braced front leg lands and
+  // hips then shoulders whip round as the straight bowling arm comes over the top. Follow-through:
+  // the arm sweeps down across the body, the back leg drives through, and the bowler peels away.
   bowler(g, dt) {
-    const ch = this.S.bowler, B = this.bw, st = this.bowl;
+    const ch = this.S.bowler, st = this.bowl;
     const d = g.del;
-    if (!d) { ch.pose(readyPose(0.6, -30, 0, 0)); return; }
-    const pace = !d.spinner;
-    const R = d.runup, TA = pace ? 0.55 : 0.5, D = pace ? 10 : 4.5, dS = pace ? 2.6 : 1.6;
-    const zR = B.relZ, x0 = B.relX;
-    const v1 = (D - dS) / (R - TA);
-    const bq = (v1 * TA - dS) / (TA * TA), aq = Math.max(0, v1 - 2 * bq * TA);
-    const distLeft = (tr) => (tr > TA ? dS + v1 * (tr - TA) : aq * tr + bq * tr * tr);
+    if (!d) { ch.pose(readyPose(0.6, -31, 0, 0)); return; }
+    const P = d.spinner ? BOWL.spin : BOWL.pace;
+    const R = d.runup, TA = P.TA, Tr = R - TA, { v0, v1, v2, uB, uF } = P;
+    const aR = (v1 - v0) / Tr;
+    const gz = (u) => TA * (v1 * u + 0.5 * (v2 - v1) * u * u); // distance travelled into the gather
+    const zG = P.ff - P.stride - gz(uF);                         // hips at take-off
+    const zStart = zG - (v0 * Tr + 0.5 * aR * Tr * Tr);
+    const runZ = (tau) => zStart + v0 * tau + 0.5 * aR * tau * tau;
+    const f0 = cadence(v0), f1 = cadence(v1);
+    const cyc = (tau) => 0.5 * (f0 * tau + 0.5 * (f1 - f0) * tau * tau / Tr);
+    const phi0 = STANCE - cyc(Tr); // the left foot leaves the ground exactly at take-off
+    const x0 = P.x0;
+    const leanRun = (tau) => lerp(0.32, 0.1, smooth(tau / Tr));
+    const runPoseAt = (tau) => {
+      const p = gaitPose(x0, runZ(tau), 0, phi0 + cyc(tau), v0 + aR * tau, leanRun(tau));
+      // ball cradled at the chest, brought up under the chin over the last strides
+      const k = smooth((tau - (Tr - 0.5)) / 0.45);
+      p.handR = [lerp(-0.14, -0.06, k), lerp(1.1, 1.36, k) + 0.05 * (1 - k) * p.sL, lerp(0.24, 0.2, k) + 0.06 * (1 - k) * p.sL];
+      p.elbowR = [-1, -0.6, -0.3];
+      return p;
+    };
     const tr = this.toRelease(g);
-    let p;
-    if (g.state === 'runup' || g.state === 'menu') {
-      const z = zR - distLeft(Math.max(0, tr));
-      const dz = st.prevZ == null || g.state === 'menu' || Math.abs(z - st.prevZ) > 1 ? 0 : z - st.prevZ;
-      st.prevZ = z;
-      const v = dt > 0 ? Math.abs(dz) / dt : 0;
-      if (g.state === 'menu') { ch.pose(readyPose(x0, zR - D, 0, 0)); return; }
-      if (tr > TA) {
-        st.phase += (dz * Math.PI) / (2 * strideOf(v));
-        p = runPose(x0, z, 0, st.phase, v);
-        p.handR = [-0.18, 1.05, 0.25]; // ball held near chest during the run
+    if (g.state === 'menu') { ch.pose(readyPose(x0, zStart, 0, 0)); return; }
+
+    if (g.state === 'runup' && tr > TA) {
+      ch.pose(runPoseAt(Math.max(0, R - tr)));
+      return;
+    }
+    // hips and feet at the key moments of the action
+    const rootG = (u) => zG + gz(u);
+    const aT = (v1 * STANCE) / f1, lift1 = gaitLift(v1);
+    const L0 = gaitFoot(STANCE, aT, lift1, 1, {}), R0 = gaitFoot(STANCE + 0.5, aT, lift1, -1, {});
+    const zTake = zG - aT;                      // left (take-off) foot
+    const fb = rootG(uB) + 0.2;                 // back foot lands just ahead of the hips (leaning back)
+    const ff = P.ff;                            // front foot lands on the popping crease
+    const xL = x0 + 0.04, xR = x0 - 0.02;
+    if (g.state === 'runup') {
+      const u = clamp(1 - tr / TA, 0, 1);
+      const B = this.bw, z = rootG(u);
+      const yaw = keys([[0, 0], [0.2, -0.55], [0.45, P.side], [uB, P.side], [uF, P.side + 0.3], [0.92, P.side * 0.45], [1, -0.25]], u);
+      const twist = keys([[0, 0], [0.45, -0.1], [uF, -0.32], [0.93, -0.05], [1, 0.15]], u);
+      const p = {
+        x: x0, z, yaw, twist,
+        hipY: keys([[0, 0.86], [0.24, 0.86 + P.bound], [0.42, 0.86 + P.bound * 0.75], [uB, 0.84], [0.68, 0.81], [uF, 0.86], [1, 0.95]], u),
+        lean: keys([[0, 0.1], [0.25, 0.02], [uB, -0.2], [uF - 0.04, -0.16], [uF, -0.06], [1, 0.28]], u),
+        roll: keys([[0, 0], [uB, 0.12], [uF, 0.15], [0.93, -0.08], [1, -0.3]], u),
+        headYaw: -(yaw + twist) * 0.92, headPitch: keys([[0, -0.05], [uB, 0.12], [1, 0.0]], u),
+      };
+      // front (left) foot: drives the knee up in the bound, reaches out and lands braced
+      if (u < uF) {
+        const dz = keys([[0, -aT], [0.25, 0.18], [uB, 0.1], [0.7, 0.32], [uF, P.stride]], u);
+        const y = keys([[0, 0.08], [0.25, 0.44], [uB, 0.36], [0.72, 0.2], [uF, 0.08]], u);
+        B.fl.set(lerp(x0 + 0.09, xL, smooth(u / uF)), y, u < 0.02 ? zTake : z + dz);
+      } else B.fl.set(xL, 0.08, ff);
+      // back (right) foot: swings through in the air, lands side-on, then drags towards the crease
+      if (u < uB) {
+        const dz = keys([[0, R0.z], [0.22, 0.28], [0.4, 0.34], [uB, fb - rootG(uB)]], u);
+        const y = keys([[0, R0.y], [0.2, 0.32], [0.4, 0.18], [uB, 0.08]], u);
+        B.fr.set(lerp(x0 - 0.09, xR, smooth(u / uB)), y, z + dz);
       } else {
-        const u = 1 - tr / TA;
-        const zAt = (uu) => zR - distLeft(TA * (1 - uu));
-        const yaw = keys([[0, 0], [0.3, -0.6], [0.55, -1.35], [0.8, -1.25], [1, -0.3]], u);
-        p = {
-          x: x0, z, yaw,
-          hipY: keys([[0, 0.93], [0.25, 1.08], [0.4, 1.14], [0.58, 0.97], [0.85, 0.92], [1, 0.86]], u),
-          lean: keys([[0, 0.2], [0.35, -0.05], [0.7, -0.25], [0.9, 0.0], [1, 0.45]], u),
-          roll: keys([[0, 0], [0.7, 0.25], [1, -0.15]], u),
-          headYaw: -yaw * 0.85, headPitch: 0.05,
-          kneeL: [0.2, 0, 1], kneeR: [-0.2, 0, 1],
-        };
-        // back (right) foot lands at u=0.58, front (left) foot at u=0.85; planted feet stay fixed in world
-        if (u < 0.58) B.fr.set(x0 - 0.1, keys([[0, 0.2], [0.3, 0.35], [0.5, 0.16], [0.58, 0.08]], u), z + keys([[0, -0.45], [0.3, -0.3], [0.58, -0.1]], u));
-        else B.fr.set(x0 - 0.1, 0.08, zAt(0.58) + 0.05);
-        if (u < 0.85) B.fl.set(x0 + 0.12, keys([[0, 0.08], [0.3, 0.42], [0.55, 0.48], [0.75, 0.3], [0.85, 0.08]], u), z + keys([[0, 0.35], [0.3, 0.25], [0.55, 0.45], [0.85, 0.6]], u));
-        else B.fl.set(x0 + 0.12, 0.08, zAt(0.85) + 0.6);
-        p.footR = B.fr; p.footL = B.fl;
-        p.footYawR = -yaw - 1.2; p.footYawL = -yaw * 0.6;
-        const beta = keys([[0, 2.3], [0.35, 2.7], [0.55, 3.4], [0.75, 4.9], [1, 6.5]], u);
-        const r = keys([[0, 0.3], [0.35, 0.32], [0.55, 0.55], [0.7, 0.6]], u);
-        const betaL = keys([[0, 2.4], [0.35, 1.3], [0.6, 0.35], [0.85, 0.5], [1, 2.2]], u);
-        const rL = keys([[0, 0.3], [0.4, 0.55], [0.85, 0.58], [1, 0.4]], u);
-        p.handR = (sh) => B.hr.set(sh.x - 0.05, sh.y + r * Math.cos(beta), sh.z + r * Math.sin(beta));
-        p.handL = (sh) => B.hl.set(sh.x + 0.08, sh.y + rL * Math.cos(betaL), sh.z + rL * Math.sin(betaL));
-        p.elbowR = [-1, 0, 0]; p.elbowL = [1, -0.5, 0];
-        B.plantL = zAt(0.85) + 0.6;
+        const k = smooth((u - uF) / (1 - uF));
+        B.fr.set(xR, 0.08 + 0.03 * k, fb + 0.28 * k);
       }
-    } else {
-      // follow-through: carry on across the pitch, decelerate, peel off to the off side
-      const w = this.relT;
-      const z = zR + 2.0 * (1 - Math.exp(-w / 0.6));
-      const x = x0 + 1.4 * smooth(w / 1.4);
-      const dz = st.prevZ == null ? 0 : z - st.prevZ;
-      st.prevZ = z;
-      if (w < 0.4) {
-        const yaw = keys([[0, -0.3], [0.2, 0.35], [0.4, 0.3]], w);
-        B.fl.set(x0 + 0.12, 0.08, B.plantL);
-        B.fr.set(x - 0.1, keys([[0, 0.15], [0.15, 0.35], [0.3, 0.12], [0.4, 0.08]], w), lerp(B.plantL - 0.9, z + 0.5, smooth(w / 0.3)));
-        const beta = 6.5 + 3.0 * (1 - Math.exp(-w / 0.1));
-        p = {
-          x, z, yaw, hipY: keys([[0, 0.86], [0.15, 0.82], [0.4, 0.9]], w),
-          lean: keys([[0, 0.45], [0.15, 0.7], [0.4, 0.35]], w), roll: -0.1,
-          footL: B.fl, footR: B.fr, kneeL: [0.2, 0, 1], kneeR: [-0.2, 0, 1],
-          handR: (sh) => B.hr.set(sh.x + 0.3 * smooth(w / 0.2), sh.y + 0.6 * Math.cos(beta), sh.z + 0.6 * Math.sin(beta)),
-          handL: [0.25, 0.85, -0.2], elbowR: [-1, 0, 0],
-          headYaw: -yaw * 0.6, headPitch: 0.1,
-        };
-      } else {
-        const v = dt > 0 ? Math.hypot(dz, 0) / dt : 0;
-        st.phase += (Math.abs(dz) * Math.PI) / (2 * strideOf(v));
-        p = runPose(x, z, 0.25, st.phase, v);
-      }
+      p.footL = B.fl; p.footR = B.fr;
+      p.footYawL = keys([[0, 0], [uF, -0.25], [1, -0.25]], u) - yaw;
+      p.footYawR = keys([[0, 0], [0.35, -1.1], [uB, -1.45], [1, -1.45]], u) - yaw;
+      p.footPitchR = keys([[0, R0.pitch], [0.3, 0.3], [uB, 0], [uF, 0], [1, 0.65]], u);
+      p.footPitchL = keys([[0, L0.pitch], [0.25, 0.5], [0.72, -0.1], [uF, 0]], u);
+      p.kneeL = B.kl.set(0, 0.25, 1); p.kneeR = B.kr.set(-0.5, 0, 0.85);
+      // bowling arm: windmill in the vertical plane along the pitch (beta: 0 up, pi/2 forward, pi down)
+      const beta = keys([[0, 1.75], [0.22, 1.45], [0.36, 1.75], [uB, 3.5], [0.68, 4.1], [uF, 4.6], [1, 2 * Math.PI + 0.14]], u);
+      const r = keys([[0, 0.22], [0.3, 0.24], [0.45, 0.4], [uB, 0.52], [0.68, 0.566], [1, 0.568]], u);
+      const xr = keys([[0, 0.1], [0.35, 0.1], [uB, -0.02], [1, 0.07]], u);
+      // front arm: reaches high towards the batsman in the bound, then pulls down hard to the hip
+      const betaL = keys([[0, 2.3], [0.15, 1.3], [0.32, 0.35], [uB, 0.3], [uF, 0.6], [0.9, 1.9], [1, 2.8]], u);
+      const rL = keys([[0, 0.3], [0.3, 0.56], [uF, 0.56], [1, 0.42]], u);
+      const xl = keys([[0, 0], [uF, 0], [1, 0.14]], u);
+      p.handR = (sh) => B.hr.set(sh.x + xr, sh.y + r * Math.cos(beta), sh.z + r * Math.sin(beta));
+      p.handL = (sh) => B.hl.set(sh.x + xl, sh.y + rL * Math.cos(betaL), sh.z + rL * Math.sin(betaL));
+      p.elbowR = [-1, -0.6, -0.4]; p.elbowL = [1, -0.6, -0.2];
+      // ease out of the running gait over the first part of the take-off
+      const k = smooth(u / 0.18);
+      if (k < 1) this.poseBlend(ch, runPoseAt(Tr + u * TA), p, k);
+      else ch.pose(p);
+      return;
+    }
+
+    // ---- follow-through ----
+    const w = this.relT;
+    const zRel = rootG(1), tau0 = 0.9, vF = P.vF;
+    const fz = (s) => zRel + vF * tau0 * (1 - Math.exp(-s / tau0));
+    const fx = (s) => x0 + 1.5 * smooth(s / 1.6); // peel away to the off side, off the pitch
+    const W1 = 0.24;
+    const vAt = (s) => Math.hypot(vF * Math.exp(-s / tau0), (fx(s + 0.01) - fx(s - 0.01)) / 0.02);
+    const B = this.bw;
+    // gait that takes over once the back leg has come through (right foot starts its stance)
+    if (st.ftW == null || w < st.ftW) st.cyc = 0.5;
+    else st.cyc += dt * cadence(vAt(w)) / 2;
+    st.ftW = w;
+    const gaitAt = (s) => {
+      const yawT = Math.atan2(fx(s + 0.02) - fx(s), fz(s + 0.02) - fz(s));
+      const p = gaitPose(fx(s), fz(s), yawT, st.cyc, Math.max(0.3, vAt(s)), 0.25);
+      return p;
+    };
+    if (w < W1) {
+      const yaw = keys([[0, -0.25], [0.1, 0.35], [W1, 0.3]], w);
+      const twist = keys([[0, 0.15], [0.1, 0.32], [W1, 0.05]], w);
+      // where the gait wants the feet when it takes over
+      const gEnd = gaitAt(W1);
+      const ge = toWorld(gEnd, gEnd.footR, B.e1), gl = toWorld(gEnd, gEnd.footL, B.e2);
+      const s1 = smooth(w / W1);
+      const fbDrag = fb + 0.28;
+      B.fr.set(lerp(xR, ge.x, s1), 0.08 + 0.34 * Math.sin(Math.PI * Math.min(1, w / W1)), lerp(fbDrag, ge.z, s1));
+      const kl = smooth((w - 0.14) / (W1 - 0.14));
+      B.fl.set(lerp(xL, gl.x, kl), lerp(0.08, gl.y, kl), lerp(ff, gl.z, kl));
+      const beta = keys([[0, 2 * Math.PI + 0.14], [0.08, 7.6], [0.18, 8.9], [W1, 9.1]], w);
+      const r = keys([[0, 0.568], [W1, 0.5]], w);
+      const xr = keys([[0, 0.07], [0.18, 0.42], [W1, 0.38]], w);
+      const betaL = keys([[0, 2.8], [0.12, 3.8], [W1, 3.6]], w);
+      const p = {
+        x: fx(w), z: fz(w), yaw, twist,
+        hipY: keys([[0, 0.95], [0.1, 0.8], [W1, 0.85]], w),
+        lean: keys([[0, 0.28], [0.1, 0.82], [W1, 0.4]], w),
+        roll: keys([[0, -0.3], [0.12, -0.1], [W1, 0]], w),
+        headYaw: -(yaw + twist) * 0.7, headPitch: keys([[0, 0], [0.1, -0.35], [W1, -0.1]], w),
+        footL: B.fl, footR: B.fr, footYawL: -0.25 - yaw, footYawR: lerp(-1.45, 0.3, s1) - yaw,
+        footPitchR: keys([[0, 0.65], [0.1, 0.6], [W1, 0]], w),
+        kneeL: B.kl.set(0, 0.2, 1), kneeR: B.kr.set(0, 0, 1),
+        handR: (sh) => B.hr.set(sh.x + xr, sh.y + r * Math.cos(beta), sh.z + r * Math.sin(beta)),
+        handL: (sh) => B.hl.set(sh.x + 0.14, sh.y + 0.43 * Math.cos(betaL), sh.z + 0.43 * Math.sin(betaL)),
+        elbowR: [-1, -0.6, -0.4], elbowL: [1, -0.6, -0.2],
+      };
+      ch.pose(p);
+      return;
+    }
+    // decelerating run-off, arms blending back into the gait, then standing and turning back
+    const pg = gaitAt(w);
+    const stand = readyPose(fx(w), fz(w), 0.4, 0);
+    const kStand = smooth((w - 1.5) / 0.5);
+    if (w < W1 + 0.2) {
+      // hands come out of the follow-through into the running arm swing
+      const k = smooth((w - W1) / 0.2);
+      const pf = { ...pg, handR: [lerp(0.15, pg.handR[0], k), lerp(0.75, pg.handR[1], k), lerp(0.35, pg.handR[2], k)],
+        handL: [lerp(0.3, pg.handL[0], k), lerp(0.85, pg.handL[1], k), lerp(-0.2, pg.handL[2], k)] };
+      ch.pose(pf);
+    } else if (kStand > 0) this.poseBlend(ch, pg, stand, kStand);
+    else ch.pose(pg);
+  }
+
+  // Blend two poses: scalars are interpolated; feet and hands are resolved to world positions first.
+  poseBlend(ch, pA, pB, k) {
+    const bl = this.blend ??= { a: {}, b: {} };
+    ch.pose(pA);
+    for (const s of ['L', 'R']) { (bl.a['h' + s] ??= V()).copy(ch.handW[s]); (bl.a['f' + s] ??= V()).copy(ch.L[s].foot.position); }
+    ch.pose(pB);
+    for (const s of ['L', 'R']) { (bl.b['h' + s] ??= V()).copy(ch.handW[s]); (bl.b['f' + s] ??= V()).copy(ch.L[s].foot.position); }
+    const p = { ...pB };
+    for (const key of ['x', 'z', 'hipY', 'hipX', 'hipZ', 'lean', 'twist', 'roll', 'hipYaw', 'hipPitch', 'hipRoll', 'headYaw', 'headPitch',
+      'footYawL', 'footYawR', 'footPitchL', 'footPitchR']) {
+      const a = pA[key] ?? 0, b = pB[key] ?? 0;
+      p[key] = lerp(a, b, k);
+    }
+    p.yaw = (pA.yaw ?? 0) + wrap((pB.yaw ?? 0) - (pA.yaw ?? 0)) * k;
+    for (const s of ['L', 'R']) {
+      p['hand' + s] = (bl['h' + s] ??= V()).lerpVectors(bl.a['h' + s], bl.b['h' + s], k);
+      p['foot' + s] = (bl['f' + s] ??= V()).lerpVectors(bl.a['f' + s], bl.b['f' + s], k);
     }
     ch.pose(p);
   }

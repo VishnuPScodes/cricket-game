@@ -86,7 +86,7 @@ function sync(dt) {
 
   // ball: in the bowler's hand during the run-up, otherwise the simulated position
   const bp = game.ball.p;
-  if (game.state === 'runup') S.ball.position.copy(S.bowler.handW.R);
+  if (game.state === 'runup') S.ball.position.copy(S.bowler.gripW.R);
   else S.ball.position.set(bp.x, bp.y, bp.z);
   S.ball.visible = game.state !== 'menu';
   const w = game.ball.w, wl = Math.hypot(w.x, w.y, w.z);
