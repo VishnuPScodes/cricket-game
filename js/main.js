@@ -43,8 +43,9 @@ addEventListener('keydown', (e) => {
 });
 
 // ---- camera: behind the batsman at the crease; follows the ball after a hit ----
-const CAM_POS = new THREE.Vector3(0.25, 2.25, 5.0);
-const CAM_LOOK = new THREE.Vector3(0, 0.75, -12);
+// lower and closer than a broadcast view, so the ball's flight is seen against the dark sight screen
+const CAM_POS = new THREE.Vector3(1.0, 1.95, 4.4);
+const CAM_LOOK = new THREE.Vector3(0.1, 0.95, -12);
 const camPos = new THREE.Vector3(40, 25, 20), camLook = new THREE.Vector3(0, 0, -10);
 const tmpPos = new THREE.Vector3(), tmpLook = new THREE.Vector3();
 let menuT = 0;
@@ -82,6 +83,8 @@ function updateCamera(dt) {
 const spinAxis = new THREE.Vector3(), spinQ = new THREE.Quaternion();
 const history = [];
 let brokenT = 0;
+const MIN_BALL_PX = 4.5, BALL_VIS_R = 0.036 * 1.4;
+let lastBounces = 0, markT = 9;
 
 function sync(dt) {
   anim.update(game, dt); // also places the bat (stance/backlift, then the exact physics pose)
@@ -90,8 +93,24 @@ function sync(dt) {
   // ball: in the bowler's hand during the run-up, otherwise the simulated position
   const bp = game.ball.p;
   if (game.state === 'runup') S.ball.position.copy(S.bowler.gripW.R);
+  else if (S.heldBall) S.ball.position.copy(S.heldBall); // caught or fielded: in the fielder's hands
   else S.ball.position.set(bp.x, bp.y, bp.z);
   S.ball.visible = game.state !== 'menu';
+  // never let the ball shrink below a few pixels on screen (it is only ~2 px at the bowler's end)
+  const camD = S.camera.position.distanceTo(S.ball.position);
+  const pxPerRad = innerHeight / (2 * Math.tan(THREE.MathUtils.degToRad(S.camera.fov) / 2));
+  const ballScale = Math.max(1, (MIN_BALL_PX / pxPerRad) * camD / (BALL_VIS_R));
+  S.ball.scale.setScalar(ballScale);
+  const live = game.state === 'runup' || (game.state === 'play' && !game.batHit);
+  S.halo.visible = live || (game.state === 'play' && game.batHit);
+  // pitch marker: where the delivery bounced, fading out
+  const bn = game.ball.bounces;
+  if (game.state === 'play' && !game.batHit && bn === 1 && lastBounces === 0) {
+    S.pitchMark.position.set(bp.x, 0.013, bp.z); markT = 0;
+  }
+  lastBounces = game.state === 'runup' ? 0 : bn;
+  markT += dt;
+  S.pitchMark.material.opacity = game.state === 'runup' ? 0 : 0.75 * Math.max(0, 1 - markT / 1.6);
   const w = game.ball.w, wl = Math.hypot(w.x, w.y, w.z);
   if (wl > 1e-3 && game.state !== 'runup') {
     spinAxis.set(w.x / wl, w.y / wl, w.z / wl);
@@ -114,6 +133,7 @@ function sync(dt) {
     const p = history[i + 1];
     m.visible = trailOn && !!p;
     if (p) m.position.copy(p);
+    m.scale.setScalar((1 - i / 16) * ballScale);
   });
 
   // stumps: knocked back with flying bails when bowled

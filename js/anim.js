@@ -31,6 +31,9 @@ function keys(arr, u) {
   return arr[arr.length - 1][1];
 }
 const V = () => new THREE.Vector3();
+const _t3 = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
+let _t3i = 0;
+const t3 = (x, y, z) => _t3[_t3i++ & 3].set(x, y, z);
 
 // ---- reusable poses ----
 const strideOf = (v) => clamp(0.1 + v * 0.055, 0.1, 0.55);
@@ -468,8 +471,66 @@ export class Animator {
         st.yaw = Math.atan2(look.x - f.x, look.z - f.z);
         p = i <= 1 ? keeperPose(f.x, f.z, st.yaw, i === 0 ? st.crouch : st.crouch * 0.6) : readyPose(f.x, f.z, st.yaw, st.crouch);
       }
+      const tk = g.taker;
+      if (tk && tk.i === i && (g.state === 'result' || g.state === 'end')) {
+        this.holdPose(g, ch, st, f, tk, p);
+        return;
+      }
+      // a ball in the air coming down near him: watch it and get the hands up under it
+      const bounced = g.ball.bounces > (g.bouncesAtHit ?? 0);
+      if (g.state === 'play' && g.batHit && !bounced && g.ball.v.y < 0) {
+        const dh = Math.hypot(b.x - f.x, b.z - f.z);
+        if (dh < 7) {
+          const k = smooth((7 - dh) / 5);
+          st.reachL ??= V(); st.reachR ??= V();
+          const cy = 1.35, hx = b.x - f.x, hz = b.z - f.z, hl = Math.hypot(hx, hz) || 1;
+          // hands meet in front of the chest, drawn towards the ball's line as it arrives
+          const tx = f.x + (hx / hl) * Math.min(0.45, hl), tz = f.z + (hz / hl) * Math.min(0.45, hl);
+          const ty = clamp(lerp(cy, b.y, 0.5), 0.9, 2.05);
+          ch.pose(p);
+          st.reachL.lerpVectors(ch.handW.L, t3(tx + 0.07 * Math.cos(st.yaw), ty, tz - 0.07 * Math.sin(st.yaw)), k);
+          st.reachR.lerpVectors(ch.handW.R, t3(tx - 0.07 * Math.cos(st.yaw), ty, tz + 0.07 * Math.sin(st.yaw)), k);
+          p = { ...p, handL: st.reachL, handR: st.reachR, elbowL: [1, -0.8, 0], elbowR: [-1, -0.8, 0], headPitch: -0.5 * k };
+        }
+      }
       ch.pose(p);
     });
+    if (!(g.taker && (g.state === 'result' || g.state === 'end'))) this.S.heldBall = null;
+  }
+
+  // The fielder who took the ball: a catch is held in both hands then thrown up in celebration;
+  // a ground stop is gathered low, then the ball comes up in the throwing hand.
+  holdPose(g, ch, st, f, tk, p0) {
+    const t = g.state === 'result' ? g.t : 2;
+    const yaw = Math.atan2(-f.x, -1.2 - f.z); // face the batsman
+    st.hL ??= V(); st.hR ??= V(); st.hb ??= V();
+    const fw = Math.sin(yaw), fc = Math.cos(yaw), sx = Math.cos(yaw), sz = -Math.sin(yaw);
+    const at = (side, up, fwd) => t3(f.x + sx * side + fw * fwd, up, f.z + sz * side + fc * fwd);
+    let p;
+    if (tk.kind === 'catch') {
+      const y0 = clamp(tk.y, 0.9, 2.0);
+      const k = smooth((t - 0.45) / 0.35); // celebration
+      p = readyPose(f.x, f.z, yaw, 0.25 * (1 - k));
+      p.lean = lerp(0.15, -0.05, k);
+      st.hL.copy(at(0.07, lerp(y0, 2.05, k), lerp(0.35, 0.05, k)));
+      st.hR.copy(at(-0.07, lerp(y0, 2.1, k), lerp(0.35, 0.05, k)));
+      if (k > 0) st.hL.x += sx * 0.25 * k, st.hL.z += sz * 0.25 * k;
+      p.headPitch = lerp(-0.2, -0.3, k);
+      // the ball between the hands, then held aloft in the right
+      st.hb.lerpVectors(t3(0, 0, 0).addVectors(st.hL, st.hR).multiplyScalar(0.5), st.hR, k);
+      st.hb.y += 0.05;
+    } else {
+      const k = smooth((t - 0.35) / 0.4); // pick-up, then up to throw
+      p = readyPose(f.x, f.z, yaw, lerp(1, 0.2, k));
+      p.hipY = lerp(0.62, 0.92, k); p.lean = lerp(0.85, 0.1, k);
+      st.hL.copy(at(0.08, lerp(0.12, 1.2, k), lerp(0.45, 0.35, k)));
+      st.hR.copy(at(-0.08, lerp(0.12, 1.75, k), lerp(0.45, -0.25, k)));
+      st.hb.copy(st.hR); st.hb.y += 0.06 * (1 - k);
+    }
+    p.handL = st.hL; p.handR = st.hR;
+    p.elbowL = [1, -0.6, -0.2]; p.elbowR = [-1, -0.6, -0.2];
+    ch.pose(p);
+    this.S.heldBall = st.hb;
   }
 
   // ---------------- umpire ----------------

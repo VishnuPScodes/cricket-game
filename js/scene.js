@@ -50,6 +50,16 @@ function ballTexture() {
   return t;
 }
 
+function haloTexture() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const x = c.getContext('2d');
+  const g = x.createRadialGradient(32, 32, 0, 32, 32, 32);
+  g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.35, 'rgba(255,255,255,0.5)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+  x.fillStyle = g; x.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(c);
+}
+
 const SKINS = [0x8d5a3b, 0xc08a5e, 0xa86f48, 0xe0b48f, 0x6e4329, 0xd29e76];
 const pick = (a) => a[(Math.random() * a.length) | 0];
 
@@ -121,7 +131,19 @@ export function buildScene(renderer) {
   scene.add(bat2);
 
   // ---- ball: drawn 1.4x physical size so it stays readable (physics uses true size) ----
-  const ball = new THREE.Mesh(new THREE.SphereGeometry(BALL_R * 1.4, 20, 14), new THREE.MeshStandardMaterial({ map: ballTexture(), roughness: 0.35 }));
+  // the ball glows a little so it stays bright white in shadow and against the pitch
+  const ball = new THREE.Mesh(new THREE.SphereGeometry(BALL_R * 1.4, 20, 14),
+    new THREE.MeshStandardMaterial({ map: ballTexture(), roughness: 0.35, emissive: 0xffffff, emissiveIntensity: 0.45 }));
+  // soft halo behind the ball, for reading it out of the bowler's hand at 20 m
+  const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: haloTexture(), color: 0xfff6d8, transparent: true, opacity: 0.55,
+    depthWrite: false, blending: THREE.AdditiveBlending }));
+  halo.scale.setScalar(BALL_R * 6);
+  ball.add(halo);
+  // where the delivery pitched: a fading ring on the pitch
+  const pitchMark = new THREE.Mesh(new THREE.RingGeometry(0.07, 0.11, 24).rotateX(-Math.PI / 2),
+    new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, depthWrite: false }));
+  pitchMark.renderOrder = 3;
+  scene.add(pitchMark);
   ball.castShadow = true;
   scene.add(ball);
   const ballShadow = new THREE.Mesh(blobGeo, new THREE.MeshBasicMaterial({ map: blobTex, transparent: true, depthWrite: false }));
@@ -136,5 +158,5 @@ export function buildScene(renderer) {
     trail.push(m);
   }
 
-  return { people, scene, camera, sun, stumps, bowlerStumps, batsman, nonStriker, bat, bat2, ball, ballShadow, trail, bowler, fielders, umpire, blobs, crowd };
+  return { people, halo, pitchMark, scene, camera, sun, stumps, bowlerStumps, batsman, nonStriker, bat, bat2, ball, ballShadow, trail, bowler, fielders, umpire, blobs, crowd };
 }

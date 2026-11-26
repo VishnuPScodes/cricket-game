@@ -54,7 +54,7 @@ export class Game {
     this.t = 0;
     this.del = makeDelivery(this.cfg);
     this.pred = null; this.noise = { x: 0, y: 0 };
-    this.batHit = false; this.padHit = false; this.crease = null;
+    this.batHit = false; this.padHit = false; this.crease = null; this.taker = null;
     this.stumpsBroken = false;
     this.message = '';
     this.fielders.forEach((f) => { f.x = f.home.x; f.z = f.home.z; });
@@ -87,7 +87,7 @@ export class Game {
     if (this.state === 'play') return this.stepPlay(dt);
     if (this.state === 'result') {
       this.t += dt;
-      if (this.batHit) stepBall(this.ball, dt);
+      if (this.batHit && !this.taker) stepBall(this.ball, dt);
       if (this.t > 2.2) this.nextBall();
     }
   }
@@ -175,9 +175,9 @@ export class Game {
     this.hitT = this.t;
     this.bouncesAtHit = b.bounces;
     b.swingOn = false; b.rolling = false; b.stopped = false;
-    // Where will it first come down? Fielders under it run there.
+    // Where will it first come down to chest height (a catch) or the ground? Fielders run there.
     const c = b.clone();
-    for (let i = 0; i < 16000 && c.bounces === b.bounces; i++) stepBall(c, DT);
+    for (let i = 0; i < 16000 && c.bounces === b.bounces && !(c.v.y < 0 && c.p.y < 1.3); i++) stepBall(c, DT);
     this.landing = { x: c.p.x, z: c.p.z };
     this.pickChasers();
     this.lastPick = 0;
@@ -204,18 +204,36 @@ export class Game {
     if (ts > 0.03 && hitsStumps(b.p)) return this.wicket('BOWLED');
 
     if (bounced && ts - this.lastPick > 0.2) { this.pickChasers(); this.lastPick = ts; }
-    for (const f of this.chasers) {
+    this.chasers.forEach((f, k) => {
       const tx = bounced ? b.p.x + b.v.x * 0.3 : this.landing.x;
       const tz = bounced ? b.p.z + b.v.z * 0.3 : this.landing.z;
-      const dx = tx - f.x, dz = tz - f.z, d = Math.hypot(dx, dz), s = f.speed * dt;
-      if (d > s) { f.x += (dx / d) * s; f.z += (dz / d) * s; } else { f.x = tx; f.z = tz; }
-    }
+      // the second man backs up a few metres short instead of colliding with the catcher
+      const backup = k === 1 && !bounced ? 3 : 0;
+      const dx = tx - f.x, dz = tz - f.z, d = Math.hypot(dx, dz) - backup, s = f.speed * dt;
+      if (d <= 0) return;
+      const n = Math.hypot(dx, dz);
+      const m = Math.min(s, d);
+      f.x += (dx / n) * m; f.z += (dz / n) * m;
+    });
     for (const f of this.fielders) {
-      if (Math.hypot(f.x - b.p.x, f.z - b.p.z) > f.reach) continue;
-      if (!bounced && b.p.y < 2.5 && ts > 0.08) return this.wicket('CAUGHT');
-      if (bounced && b.p.y < 1.2) return this.fielded(f, ts);
+      const near = Math.hypot(f.x - b.p.x, f.z - b.p.z);
+      // a catch: the ball comes down within arm's reach (a stretch or a dive) below about head-and-hands height
+      if (!bounced && b.p.y < 2.2 && ts > 0.08 && near < f.reach + 0.3) return this.take(f, 'catch') || this.wicket('CAUGHT');
+      if (bounced && b.p.y < 1.2 && near < f.reach) return this.take(f, 'field') || this.fielded(f, ts);
     }
     if (ts > 14) return this.fielded(this.chasers[0], ts);
+  }
+
+  // The fielder now holds the ball: it stops flying and sits in his hands (see main.js / anim.js).
+  take(f, kind) {
+    const b = this.ball;
+    this.taker = { i: this.fielders.indexOf(f), kind, x: b.p.x, y: b.p.y, z: b.p.z, t: this.t };
+    // the last stride/lunge: the fielder ends up with the ball right in front of him
+    const dx = b.p.x - f.x, dz = b.p.z - f.z, d = Math.hypot(dx, dz);
+    if (d > 0.3) { f.x += (dx / d) * (d - 0.3); f.z += (dz / d) * (d - 0.3); }
+    b.v.x = b.v.y = b.v.z = 0; b.w.x = b.w.y = b.w.z = 0;
+    b.stopped = true;
+    return false;
   }
 
   // Runs come from how long the ball took to be fielded and returned.
